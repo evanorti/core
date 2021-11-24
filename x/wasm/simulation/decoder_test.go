@@ -24,7 +24,7 @@ var (
 )
 
 func TestDecodeDistributionStore(t *testing.T) {
-	cdc := keeper.MakeTestCodec(t)
+	cdc := keeper.MakeTestCodec()
 	dec := NewDecodeStore(cdc)
 
 	lastCodeIDbz := make([]byte, 8)

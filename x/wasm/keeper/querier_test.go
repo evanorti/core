@@ -129,3 +129,41 @@ func TestQueryMultipleGoroutines(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// normal wasmvm@v0.16.2
+// BenchmarkConcurrentQuery-12    	       1	4399148064 ns/op	46845712 B/op	  723560 allocs/op
+
+// forked wasmvm@optimize-test
+// BenchmarkConcurrentQuery-12    	       1	5445111477 ns/op	46922824 B/op	  724364 allocs/op
+func BenchmarkConcurrentQuery(t *testing.B) {
+	for i := 0; i < t.N; i++ {
+		input := CreateTestInputBenchmark(t)
+
+		goCtx := sdk.WrapSDKContext(input.Ctx)
+		ctx, accKeeper, bankKeeper, keeper := input.Ctx, input.AccKeeper, input.BankKeeper, input.WasmKeeper
+		creator := createFakeFundedAccount(ctx, accKeeper, bankKeeper, sdk.NewCoins())
+
+		wasmCode, err := ioutil.ReadFile("./testdata/memory_test.wasm")
+		require.NoError(t, err)
+
+		contractID, err := keeper.StoreCode(ctx, creator, wasmCode)
+		require.NoError(t, err)
+
+		addr, _, err := keeper.InstantiateContract(ctx, contractID, creator, sdk.AccAddress{}, []byte("{}"), sdk.NewCoins())
+		require.NoError(t, err)
+
+		querier := NewQuerier(keeper)
+
+		wg := &sync.WaitGroup{}
+		testCases := 1000
+		wg.Add(testCases)
+		for n := 0; n < testCases; n++ {
+			go func() {
+				_, err := querier.ContractStore(goCtx, &types.QueryContractStoreRequest{ContractAddress: addr.String(), QueryMsg: []byte(`{"recursive":{"count": 10}}`)})
+				require.NoError(t, err)
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+	}
+}
