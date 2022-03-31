@@ -54,7 +54,7 @@ func (k msgServer) SwapSend(goCtx context.Context, msg *types.MsgSwapSend) (*typ
 	}, nil
 }
 
-// handleMsgSwap handles the logic of a MsgSwap
+// handleSwapRequest handles the logic of a MsgSwap
 // This function does not repeat checks that have already been performed in msg.ValidateBasic()
 // Ex) assert(offerCoin.Denom != askDenom)
 func (k msgServer) handleSwapRequest(ctx sdk.Context,
@@ -67,7 +67,7 @@ func (k msgServer) handleSwapRequest(ctx sdk.Context,
 		return nil, err
 	}
 
-	// Charge a spread if applicable; the spread is burned
+	// Charge a spread if applicable; the fee is sent to the oracle reward pool.
 	var feeDecCoin sdk.DecCoin
 	if spread.IsPositive() {
 		feeDecCoin = sdk.NewDecCoinFromDec(swapDecCoin.Denom, spread.Mul(swapDecCoin.Amount))
@@ -75,40 +75,41 @@ func (k msgServer) handleSwapRequest(ctx sdk.Context,
 		feeDecCoin = sdk.NewDecCoin(swapDecCoin.Denom, sdk.ZeroInt())
 	}
 
-	// Subtract fee from the swap coin
+	// Subtract spread fee from the swap coin
 	swapDecCoin.Amount = swapDecCoin.Amount.Sub(feeDecCoin.Amount)
 
-	// Update pool delta
+	// Apply swaps to pools to update pool delta
 	err = k.ApplySwapToPool(ctx, offerCoin, swapDecCoin)
 	if err != nil {
 		return nil, err
 	}
 
-	// Send offer coins to module account
+	// Send offer coins from the trader to the market module account
 	offerCoins := sdk.NewCoins(offerCoin)
 	err = k.BankKeeper.SendCoinsFromAccountToModule(ctx, trader, types.ModuleName, offerCoins)
 	if err != nil {
 		return nil, err
 	}
 
-	// Burn offered coins and subtract from the trader's account
+	// Burn offered coins
 	err = k.BankKeeper.BurnCoins(ctx, types.ModuleName, offerCoins)
 	if err != nil {
 		return nil, err
 	}
 
-	// Mint asked coins and credit Trader's account
+	// Add truncated decimalCoin to swapFee
 	swapCoin, decimalCoin := swapDecCoin.TruncateDecimal()
-	feeDecCoin = feeDecCoin.Add(decimalCoin) // add truncated decimalCoin to swapFee
+	feeDecCoin = feeDecCoin.Add(decimalCoin)
 	feeCoin, _ := feeDecCoin.TruncateDecimal()
 
+	// Mint asked coins and credit the trader's account. Swap fees are added back in and minted as well.
 	mintCoins := sdk.NewCoins(swapCoin.Add(feeCoin))
 	err = k.BankKeeper.MintCoins(ctx, types.ModuleName, mintCoins)
 	if err != nil {
 		return nil, err
 	}
 
-	// Send swap coin to the trader
+	// Send swapped coin to the trader
 	swapCoins := sdk.NewCoins(swapCoin)
 	err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, receiver, swapCoins)
 	if err != nil {
